@@ -125,3 +125,43 @@ class MultiHeadAttention(nn.Module):
         
         # (batch, seq_len, d_model) --> (batch, seq_len, d_model)
         return self.w_o(x)
+
+class ResidualConnection(nn.Module):
+    
+    def __init__(self, dropout: float):
+        super().__init__()
+        self.dropout = nn.Dropout(dropout)
+        self.norm = LayerNormalization()
+    
+    # Transformer 原论文中是先sublayer后layernorm
+    # sublayer可以是MHA或者FFN
+    def forward(self, x, sublayer):
+        return x + self.dropout(sublayer(self.norm(x)))
+
+class EncoderBlock(nn.Module):
+    
+    def __init__(self, self_attention_block: MultiHeadAttention, feed_forward_block: FeedForwardBlock) -> None:
+        super().__init__()
+        self.self_attention_block = self_attention_block
+        self.feed_forward_block = feed_forward_block
+        self.residual_connections = nn.ModuleList([ResidualConnection for _ in range(2)])
+    
+    def forward(self, x, src_mask):
+        # 由于ResidualBlock中的sublayer只接受一个参数x，而self_attention_block却接受q,k,v,mask四个参数，
+        # 所以需要对self_attention_block进行封装得到一个只接受x的函数，这里使用匿名函数，src_mask是外部捕获的变量，即使ResidualBlock对src_mask不知道也可以使用，闭包原理
+        x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, src_mask))
+        x = self.residual_connections[1](x, self.feed_forward_block)
+        return x
+
+class Encoder(nn.Module):
+    
+    def __init__(self, layers: nn.ModuleList) -> None:
+        super().__init__()
+        self.layers = layers
+        self.norm = LayerNormalization()
+        
+    def forward(self, x, mask):
+        for layer in self.layers:
+            x = layer(x, mask)
+        
+        return self.norm(x)
